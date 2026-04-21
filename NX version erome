@@ -1,0 +1,600 @@
+-- === FUSIÓN FINAL: RAYFIELD + NX PREMIUM + BOX ESP EN VISUALES === --
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+local Window = Rayfield:CreateWindow({
+   Name = "NX ",
+   LoadingTitle = "NX Premium + Rayfield",
+   LoadingSubtitle = "by DreenNX",
+   Theme = "Default",
+   DisableRayfieldPrompts = true,
+   KeySystem = false,
+   ToggleUIKeybind = nil
+})
+
+-- Pestañas
+local TabMov = Window:CreateTab("⚡ Movimiento")
+local TabUtil = Window:CreateTab("🚀 Utilidades")
+local TabProt = Window:CreateTab("🛡️ Protección")
+local TabVis = Window:CreateTab("👁️ Visuales") -- Aquí meteremos el Box ESP
+
+-- ========== VARIABLES GLOBALES (Estado) ==========
+local player = game.Players.LocalPlayer
+local teleportService = game:GetService("TeleportService")
+local uis = game:GetService("UserInputService")
+local rs = game:GetService("RunService")
+local camera = workspace.CurrentCamera
+
+local function getChar()
+    return player.Character or player.CharacterAdded:Wait()
+end
+
+-- Estados de Toggles originales
+local tpActive = false
+local infJumpActive = false
+local noclipActive = false
+local antiFlingActive = false
+local antiAnchorActive = false
+local antiFallActive = false
+local teleportCD = false
+local antiFallCD = false
+
+-- ESP Básico + Box ESP
+local espActive = false          -- Highlight
+local espHitbox = false         -- Línea vertical
+local espTracer = false         -- Tracer básico
+local espBox = false            -- NUEVO: Box ESP 2D
+local espBoxColor = Color3.fromRGB(0, 255, 156) -- Color de las cajas
+
+local espHighlights = {}
+local espDrawings = {}          -- Aquí guardaremos líneas, tracers y también cajas
+local DrawingSupported = false
+local DrawingLib = nil
+pcall(function() DrawingLib = Drawing; if DrawingLib then DrawingSupported = true end end)
+
+-- ========== FUNCIONES DE DIBUJO (MODIFICADAS PARA INCLUIR BOX) ==========
+local function safeCreateLine()
+    if not DrawingSupported then return nil end
+    local success, line = pcall(function() return DrawingLib.new("Line") end)
+    return success and line or nil
+end
+
+local function safeCreateSquare()
+    if not DrawingSupported then return nil end
+    local success, sq = pcall(function() return DrawingLib.new("Square") end)
+    return success and sq or nil
+end
+
+-- Actualiza o crea los objetos de dibujo para un jugador según los toggles activos
+local function updateDrawingsForPlayer(plr)
+    if plr == player then return end
+    local drawings = espDrawings[plr] or {}
+    espDrawings[plr] = drawings
+
+    -- Hitbox Vertical
+    if espHitbox then
+        if not drawings.verticalLine then
+            local line = safeCreateLine()
+            if line then
+                drawings.verticalLine = line
+                line.Color = Color3.fromRGB(0, 255, 156)
+                line.Thickness = 2
+                line.Transparency = 0.6
+                line.Visible = true
+            end
+        end
+    else
+        if drawings.verticalLine then
+            pcall(function() drawings.verticalLine:Remove() end)
+            drawings.verticalLine = nil
+        end
+    end
+
+    -- Tracer básico
+    if espTracer then
+        if not drawings.tracer then
+            local line = safeCreateLine()
+            if line then
+                drawings.tracer = line
+                line.Color = Color3.fromRGB(0, 255, 156)
+                line.Thickness = 1.5
+                line.Transparency = 0.5
+                line.Visible = true
+            end
+        end
+    else
+        if drawings.tracer then
+            pcall(function() drawings.tracer:Remove() end)
+            drawings.tracer = nil
+        end
+    end
+
+    -- Box ESP (NUEVO)
+    if espBox then
+        if not drawings.box then
+            local box = safeCreateSquare()
+            if box then
+                drawings.box = box
+                box.Color = espBoxColor
+                box.Thickness = 2
+                box.Filled = false
+                box.Visible = false -- Se hará visible en update
+            end
+        else
+            -- Actualizar color por si cambió
+            drawings.box.Color = espBoxColor
+        end
+    else
+        if drawings.box then
+            pcall(function() drawings.box:Remove() end)
+            drawings.box = nil
+        end
+    end
+end
+
+local function applyVisualsToAll()
+    for _, plr in pairs(game.Players:GetPlayers()) do
+        if plr ~= player then
+            updateDrawingsForPlayer(plr)
+        end
+    end
+end
+
+local function clearDrawingsForPlayer(plr)
+    local drawings = espDrawings[plr]
+    if drawings then
+        for _, obj in pairs(drawings) do
+            pcall(function() obj:Remove() end)
+        end
+        espDrawings[plr] = nil
+    end
+end
+
+-- ========== ACTUALIZACIÓN EN TIEMPO REAL (RenderStepped) ==========
+local function updateESPVisuals()
+    if not DrawingSupported then return end
+    local viewportSize = camera.ViewportSize
+    local centerScreen = Vector2.new(viewportSize.X / 2, viewportSize.Y / 2)
+
+    for plr, drawings in pairs(espDrawings) do
+        local char = plr.Character
+        if char and char:FindFirstChild("HumanoidRootPart") and char:FindFirstChild("Head") then
+            local root = char.HumanoidRootPart
+            local hum = char.Humanoid
+            local head = char.Head
+            local headPos = head.Position
+            local feetPos = root.Position - Vector3.new(0, hum.HipHeight or 2, 0)
+
+            local headScreen, onScreenHead = camera:WorldToViewportPoint(headPos)
+            local feetScreen, onScreenFeet = camera:WorldToViewportPoint(feetPos)
+            local isOnScreen = onScreenHead and onScreenFeet
+
+            -- Hitbox vertical
+            if drawings.verticalLine then
+                if isOnScreen then
+                    pcall(function()
+                        drawings.verticalLine.From = Vector2.new(headScreen.X, headScreen.Y)
+                        drawings.verticalLine.To = Vector2.new(feetScreen.X, feetScreen.Y)
+                        drawings.verticalLine.Visible = true
+                    end)
+                else
+                    pcall(function() drawings.verticalLine.Visible = false end)
+                end
+            end
+
+            -- Tracer básico
+            if drawings.tracer then
+                if isOnScreen then
+                    pcall(function()
+                        drawings.tracer.From = centerScreen
+                        drawings.tracer.To = Vector2.new(feetScreen.X, feetScreen.Y)
+                        drawings.tracer.Visible = true
+                    end)
+                else
+                    pcall(function() drawings.tracer.Visible = false end)
+                end
+            end
+
+            -- Box ESP (NUEVO)
+            if drawings.box then
+                if isOnScreen then
+                    local distance = (camera.CFrame.Position - headPos).Magnitude
+                    local scale = 100 / math.max(distance, 1)
+                    local boxWidth = 45 * scale
+                    local boxHeight = 80 * scale
+                    pcall(function()
+                        drawings.box.Position = Vector2.new(headScreen.X - boxWidth/2, headScreen.Y - boxHeight/2)
+                        drawings.box.Size = Vector2.new(boxWidth, boxHeight)
+                        drawings.box.Visible = true
+                    end)
+                else
+                    pcall(function() drawings.box.Visible = false end)
+                end
+            end
+        else
+            -- Si no hay personaje, ocultar todo
+            if drawings.verticalLine then pcall(function() drawings.verticalLine.Visible = false end) end
+            if drawings.tracer then pcall(function() drawings.tracer.Visible = false end) end
+            if drawings.box then pcall(function() drawings.box.Visible = false end) end
+        end
+    end
+end
+
+-- ========== FUNCIONES PARA ESP HIGHLIGHT (sin cambios) ==========
+local function createESPForPlayer(targetPlayer)
+    if targetPlayer == player then return end
+    if espHighlights[targetPlayer] then return end
+    local char = targetPlayer.Character
+    if not char then return end
+    local highlight = Instance.new("Highlight")
+    highlight.FillColor = Color3.fromRGB(0, 255, 156)
+    highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+    highlight.FillTransparency = 0.5
+    highlight.Adornee = char
+    highlight.Parent = game:GetService("CoreGui")
+    espHighlights[targetPlayer] = highlight
+end
+
+local function removeESPForPlayer(targetPlayer)
+    local hl = espHighlights[targetPlayer]
+    if hl then hl:Destroy(); espHighlights[targetPlayer] = nil end
+end
+
+-- ========== NOTIFICACIONES Y SERVER HOP (sin cambios) ==========
+local function Notify(title, message, duration)
+    duration = duration or 2.5
+    Rayfield:Notify({
+        Title = title,
+        Content = message,
+        Duration = duration,
+        Image = nil,
+        Actions = {
+            Ignore = {
+                Name = "Entendido",
+                Callback = function() end
+            },
+        },
+    })
+end
+
+local function serverHop(criteria)
+    Notify("Server Hop", "🔎 Buscando servidores...", 2)
+    local HttpService = game:GetService("HttpService")
+    local url = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=" .. (criteria == "ping" and "Asc" or "Desc") .. "&limit=100"
+    local success, result = pcall(function()
+        return HttpService:JSONDecode(game:HttpGet(url))
+    end)
+    if not success or not result or #result.data == 0 then
+        Notify("Error", "❌ No se encontraron servidores.", 2.5)
+        return
+    end
+    local servers = result.data
+    local targetServer = nil
+    for _, server in ipairs(servers) do
+        if server.id ~= game.JobId then
+            targetServer = server
+            break
+        end
+    end
+    if not targetServer then
+        Notify("Error", "❌ No se encontraron otros servidores.", 2.5)
+        return
+    end
+    local msg = (criteria == "ping" and "📶 Conectando al servidor con mejor ping..." or "👤 Conectando al servidor con menos jugadores...")
+    Notify("Server Hop", msg, 2)
+    task.wait(0.5)
+    pcall(function()
+        teleportService:TeleportToPlaceInstance(game.PlaceId, targetServer.id, player)
+    end)
+end
+
+-- ========== CONSTRUCCIÓN DE LA UI ==========
+
+-- PESTAÑA MOVIMIENTO
+TabMov:CreateSection("🏃 Control")
+TabMov:CreateSlider({
+    Name = "Velocidad",
+    Range = {16, 500},
+    Increment = 1,
+    CurrentValue = 16,
+    Callback = function(v)
+        local char = getChar()
+        if char and char:FindFirstChild("Humanoid") then char.Humanoid.WalkSpeed = v end
+    end
+})
+TabMov:CreateSlider({
+    Name = "Potencia de Salto",
+    Range = {50, 200},
+    Increment = 5,
+    CurrentValue = 50,
+    Callback = function(v)
+        local char = getChar()
+        if char and char:FindFirstChild("Humanoid") then char.Humanoid.JumpPower = v end
+    end
+})
+
+-- PESTAÑA UTILIDADES
+TabUtil:CreateSection("⚡ Acciones")
+TabUtil:CreateToggle({
+    Name = "TP al mirar (Tecla F)",
+    CurrentValue = false,
+    Callback = function(v)
+        tpActive = v
+        Notify("TP al mirar", v and "✅ Activado" or "❌ Desactivado", 1.5)
+    end
+})
+TabUtil:CreateToggle({
+    Name = "Salto Infinito",
+    CurrentValue = false,
+    Callback = function(v)
+        infJumpActive = v
+        Notify("Salto Infinito", v and "✅ Activado" or "❌ Desactivado", 1.5)
+    end
+})
+TabUtil:CreateButton({
+    Name = "❤️ Curar",
+    Callback = function()
+        local char = getChar()
+        if char and char:FindFirstChild("Humanoid") then
+            char.Humanoid.Health = char.Humanoid.MaxHealth
+            Notify("Curar", "💚 Vida restaurada al máximo", 1.5)
+        else
+            Notify("Error", "😵 No se pudo curar. Asegúrate de tener un personaje.", 2.5)
+        end
+    end
+})
+TabUtil:CreateButton({
+    Name = "🔄 Rejoin",
+    Callback = function()
+        Notify("Rejoin", "Reconectando al servidor...", 1.5)
+        task.wait(0.5)
+        teleportService:Teleport(game.PlaceId, player)
+    end
+})
+TabUtil:CreateButton({
+    Name = "🚀 Mejor Ping (Hop)",
+    Callback = function() serverHop("ping") end
+})
+TabUtil:CreateButton({
+    Name = "👥 Servidor Vacío (Hop)",
+    Callback = function() serverHop("players") end
+})
+
+-- PESTAÑA PROTECCIÓN
+TabProt:CreateSection("🛡️ Defensas")
+TabProt:CreateToggle({
+    Name = "No-Clip",
+    CurrentValue = false,
+    Callback = function(v)
+        noclipActive = v
+        Notify("No-Clip", v and "✅ Activado" or "❌ Desactivado", 1.5)
+    end
+})
+TabProt:CreateToggle({
+    Name = "Anti-Fling",
+    CurrentValue = false,
+    Callback = function(v)
+        antiFlingActive = v
+        Notify("Anti-Fling", v and "✅ Activado" or "❌ Desactivado", 1.5)
+    end
+})
+TabProt:CreateToggle({
+    Name = "Anti-Anchor",
+    CurrentValue = false,
+    Callback = function(v)
+        antiAnchorActive = v
+        Notify("Anti-Anchor", v and "✅ Activado" or "❌ Desactivado", 1.5)
+    end
+})
+TabProt:CreateToggle({
+    Name = "Anti-Fall Damage",
+    CurrentValue = false,
+    Callback = function(v)
+        antiFallActive = v
+        Notify("Anti-Fall Damage", v and "✅ Activado" or "❌ Desactivado", 1.5)
+    end
+})
+
+-- ========== PESTAÑA VISUALES (CON BOX ESP INTEGRADO) ==========
+TabVis:CreateSection("🎨 ESP")
+TabVis:CreateToggle({
+    Name = "🔆 ESP Highlight",
+    CurrentValue = false,
+    Callback = function(v)
+        espActive = v
+        Notify("ESP Highlight", v and "✅ Activado" or "❌ Desactivado", 1.5)
+        if not v then
+            for plr,_ in pairs(espHighlights) do removeESPForPlayer(plr) end
+        else
+            for _,plr in pairs(game.Players:GetPlayers()) do
+                if plr ~= player then createESPForPlayer(plr) end
+            end
+        end
+    end
+})
+TabVis:CreateToggle({
+    Name = "📏 Hitbox Vertical",
+    CurrentValue = false,
+    Callback = function(v)
+        espHitbox = v
+        Notify("Hitbox Vertical", v and "✅ Activado" or "❌ Desactivado", 1.5)
+        applyVisualsToAll()
+    end
+})
+TabVis:CreateToggle({
+    Name = "📐 Tracer",
+    CurrentValue = false,
+    Callback = function(v)
+        espTracer = v
+        Notify("Tracer", v and "✅ Activado" or "❌ Desactivado", 1.5)
+        applyVisualsToAll()
+    end
+})
+
+-- NUEVO: Box ESP con selector de color
+TabVis:CreateToggle({
+    Name = "📦 Box ESP",
+    CurrentValue = false,
+    Callback = function(v)
+        espBox = v
+        Notify("Box ESP", v and "✅ Activado" or "❌ Desactivado", 1.5)
+        applyVisualsToAll()
+    end
+})
+TabVis:CreateColorPicker({
+    Name = "Color de las cajas",
+    Color = espBoxColor,
+    Callback = function(c)
+        espBoxColor = c
+        -- Actualizar color de cajas existentes
+        for plr, drawings in pairs(espDrawings) do
+            if drawings.box then
+                drawings.box.Color = c
+            end
+        end
+    end
+})
+
+-- ========== LÓGICA EN TIEMPO REAL (TECLAS, NOCLIP, ETC.) ==========
+
+local function getSmartTPPosition()
+    local char = getChar()
+    if not char then return nil end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return nil end
+    local mouse = player:GetMouse()
+    local rayOrigin = camera.CFrame.Position
+    local mousePos = mouse.Hit.Position
+    local rayDirection = (mousePos - rayOrigin).Unit * 5000
+    local rayParams = RaycastParams.new()
+    rayParams.FilterType = Enum.RaycastFilterType.Blacklist
+    rayParams.FilterDescendantsInstances = {char}
+    local rayResult = workspace:Raycast(rayOrigin, rayDirection, rayParams)
+    if rayResult then
+        return rayResult.Position + Vector3.new(0, 4, 0)
+    else
+        return rayOrigin + rayDirection
+    end
+end
+
+uis.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.KeyCode == Enum.KeyCode.F and tpActive and not teleportCD then
+        teleportCD = true
+        local char = getChar()
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if root then
+            local targetPos = getSmartTPPosition()
+            if targetPos then
+                root.CFrame = CFrame.new(targetPos)
+                root.Velocity = Vector3.zero
+                root.AssemblyLinearVelocity = Vector3.zero
+                Notify("TP", "🌀 Teletransportado", 1)
+            end
+        end
+        task.wait(0.15)
+        teleportCD = false
+    end
+end)
+
+uis.JumpRequest:Connect(function()
+    if infJumpActive then
+        local char = getChar()
+        local hum = char and char:FindFirstChild("Humanoid")
+        if hum and hum:GetState() ~= Enum.HumanoidStateType.Jumping then
+            hum:ChangeState(Enum.HumanoidStateType.Jumping)
+        end
+    end
+end)
+
+rs.Stepped:Connect(function()
+    local char = getChar()
+    if not char then return end
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then
+            if noclipActive then part.CanCollide = false end
+            if antiAnchorActive then part.Anchored = false end
+            if antiFlingActive then
+                part.Velocity = Vector3.zero
+                part.RotVelocity = Vector3.zero
+            end
+        end
+    end
+end)
+
+rs.Heartbeat:Connect(function()
+    local char = getChar()
+    local hum = char and char:FindFirstChild("Humanoid")
+    if antiFallActive and not antiFallCD and char and hum then
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if root and root.Velocity.Y < -20 then
+            local rayParams = RaycastParams.new()
+            rayParams.FilterDescendantsInstances = {char}
+            rayParams.FilterType = Enum.RaycastFilterType.Blacklist
+            local rayResult = workspace:Raycast(root.Position, Vector3.new(0, -12, 0), rayParams)
+            if rayResult and rayResult.Distance < 3 then
+                hum.PlatformStand = true
+                root.Velocity = Vector3.new(root.Velocity.X, 0, root.Velocity.Z)
+                hum:ChangeState(Enum.HumanoidStateType.Landed)
+                task.wait(0.05)
+                hum.PlatformStand = false
+                antiFallCD = true
+                task.wait(0.3)
+                antiFallCD = false
+            end
+        end
+    end
+end)
+
+rs.RenderStepped:Connect(function()
+    if espActive then
+        for _, plr in pairs(game.Players:GetPlayers()) do
+            if plr ~= player and not espHighlights[plr] then
+                createESPForPlayer(plr)
+            end
+        end
+    end
+    updateESPVisuals() -- Aquí se dibuja TODO (hitbox, tracer, box)
+end)
+
+game.Players.PlayerAdded:Connect(function(plr)
+    plr.CharacterAdded:Connect(function()
+        if espActive then task.wait(0.5); createESPForPlayer(plr) end
+        if espHitbox or espTracer or espBox then
+            task.wait(0.5)
+            updateDrawingsForPlayer(plr)
+        end
+    end)
+    if plr.Character then
+        if espActive then createESPForPlayer(plr) end
+        if espHitbox or espTracer or espBox then
+            updateDrawingsForPlayer(plr)
+        end
+    end
+end)
+
+game.Players.PlayerRemoving:Connect(function(plr)
+    removeESPForPlayer(plr)
+    clearDrawingsForPlayer(plr)
+end)
+
+-- OCULTAR/MOSTRAR CON K
+local panelVisible = true
+local function togglePanel()
+    if panelVisible then
+        Window:Close()
+        panelVisible = false
+    else
+        Window:Open()
+        panelVisible = true
+    end
+end
+
+uis.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.KeyCode == Enum.KeyCode.K then
+        togglePanel()
+    end
+end)
+
+Notify("NX Fusion", "🔥 Menú cargado + Box ESP en Visuales. Presiona K para ocultar/mostrar.", 4)
+print("✅ NX Fusion Final - Box ESP integrado sin errores.")
